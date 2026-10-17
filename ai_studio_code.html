@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Outpost Zero: Endo-Assault</title>
+<style>
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+  body, html {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #0d0402;
+    font-family: 'Courier New', Courier, monospace;
+  }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+  #ui-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  .hud-panel {
+    position: absolute;
+    top: env(safe-area-inset-top, 12px);
+    left: 12px;
+    right: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #ff3311;
+    text-shadow: 0 0 8px rgba(255, 50, 0, 0.8), 0 0 15px rgba(255, 0, 0, 0.5);
+    font-size: 16px;
+    font-weight: 900;
+    letter-spacing: 2px;
+  }
+  .hud-sub {
+    font-size: 12px;
+    color: #ffaa33;
+  }
+  #missile-btn {
+    position: absolute;
+    bottom: 24px;
+    right: 24px;
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #ff2200 0%, #660000 100%);
+    border: 3px solid #ffaa00;
+    color: white;
+    font-weight: bold;
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    pointer-events: auto;
+    box-shadow: 0 0 15px rgba(255, 0, 0, 0.6);
+    transition: transform 0.1s;
+  }
+  #missile-btn:active {
+    transform: scale(0.92);
+  }
+  #start-screen, #game-over-screen {
+    position: absolute;
+    inset: 0;
+    background: rgba(10, 3, 2, 0.88);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    pointer-events: auto;
+    color: #ff3b10;
+    text-align: center;
+    padding: 20px;
+    z-index: 100;
+  }
+  h1 {
+    font-size: 32px;
+    letter-spacing: 4px;
+    text-shadow: 0 0 15px #ff2200;
+    margin-bottom: 12px;
+  }
+  p {
+    color: #ddb896;
+    font-size: 14px;
+    max-width: 440px;
+    line-height: 1.5;
+    margin-bottom: 24px;
+  }
+  .btn {
+    background: #ff3300;
+    color: #000;
+    border: none;
+    padding: 14px 32px;
+    font-size: 18px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    cursor: pointer;
+    box-shadow: 0 0 20px #ff3300;
+    border-radius: 4px;
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="ui-overlay">
+  <div class="hud-panel">
+    <div>
+      <div>BASE HP: <span id="hp-val">100%</span></div>
+      <div class="hud-sub">WAVE: <span id="wave-val">1</span></div>
+    </div>
+    <div style="text-align: right;">
+      <div>SCORE: <span id="score-val">00000</span></div>
+      <div class="hud-sub">AMMO: <span id="ammo-val">∞</span></div>
+    </div>
+  </div>
+
+  <div id="missile-btn">
+    <span>EMP</span>
+    <span id="missile-count" style="font-size: 10px;">x3</span>
+  </div>
+</div>
+
+<!-- Start Menu -->
+<div id="start-screen">
+  <h1>OUTPOST ZERO</h1>
+  <p>DESERT PERIMETER BREACH.<br>Cybernetic endoskeletons are marching from the horizon. Air support dropped them off. Neutralize all units.</p>
+  <button class="btn" id="start-btn">ENGAGE TURRET</button>
+</div>
+
+<!-- Game Over -->
+<div id="game-over-screen" class="hidden">
+  <h1 style="color: #ff0033;">PERIMETER OVERRUN</h1>
+  <p id="final-stats">Your bunker has collapsed.</p>
+  <button class="btn" id="restart-btn">RETRY MISSION</button>
+</div>
+
+<script>
+/**
+ * AUDIO SYNTHESIZER (Pure Web Audio API - Zero External Assets)
+ */
+class SoundEngine {
+  constructor() {
+    this.ctx = null;
+  }
+  init() {
+    if (!this.ctx) {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+  }
+  playShoot() {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(600, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(80, this.ctx.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.12);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.12);
+  }
+  playLaser() {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(220, this.ctx.currentTime + 0.18);
+    gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.18);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.18);
+  }
+  playExplosion() {
+    if (!this.ctx) return;
+    const bufSize = this.ctx.sampleRate * 0.4;
+    const buffer = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(800, this.ctx.currentTime);
+    filter.frequency.linearRampToValueAtTime(40, this.ctx.currentTime + 0.4);
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.6, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.4);
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.ctx.destination);
+    noise.start();
+  }
+  playMetalHit() {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(1200, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(300, this.ctx.currentTime + 0.05);
+    gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.05);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.05);
+  }
+  playHeliSound() {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(45, this.ctx.currentTime);
+    gain.gain.setValueAtTime(0.05, this.ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.0, this.ctx.currentTime + 0.08);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.08);
+  }
+}
+
+const audio = new SoundEngine();
+
+/**
+ * GAME ENGINE
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let W = canvas.width = window.innerWidth;
+let H = canvas.height = window.innerHeight;
+let horizonY = H * 0.45;
+
+window.addEventListener('resize', () => {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  horizonY = H * 0.45;
+});
+
+// State
+let gameState = 'START';
+let score = 0;
+let baseHp = 100;
+let wave = 1;
+let missiles = 3;
+let screenShake = 0;
+let flashDamage = 0;
+
+// Input & Reticle
+let touchPos = { x: W / 2, y: H / 2 };
+let isFiring = false;
+let lastShotTime = 0;
+const FIRE_RATE = 110; // ms
+
+// Entity Pools
+let robots = [];
+let helicopter = null;
+let projectiles = [];
+let particles = [];
+let pods = [];
+
+// Horizon coordinates projection
+function project3D(x, z) {
+  // z: 1.0 (at horizon) down to 0.0 (right in front of player bunker)
+  const scale = (1.0 - z); 
+  const pX = (W / 2) + (x - (W / 2)) * (0.15 + 0.85 * scale);
+  const pY = horizonY + (H - horizonY) * scale;
+  const size = Math.max(12, scale * 210);
+  return { pX, pY, size, scale };
+}
+
+/**
+ * ENDOSKELETON ROBOT CLASS (Terminator T-800 style)
+ */
+class Endoskeleton {
+  constructor(x, z = 1.0) {
+    this.x = x;
+    this.z = z; // 1 = distance, 0 = at barricade
+    this.speed = 0.00035 + Math.random() * 0.00025 + (wave * 0.00004);
+    this.hp = 3;
+    this.maxHp = 3;
+    this.walkCycle = Math.random() * 10;
+    this.attackCooldown = 0;
+    this.dead = false;
+    this.color = '#b0b8c2'; // Chrome
+  }
+
+  update(dt) {
+    if (this.dead) return;
+    this.walkCycle += dt * 0.008;
+
+    // Move toward barricade
+    if (this.z > 0.08) {
+      this.z -= this.speed * dt;
+    } else {
+      // Robot reached outpost - attack base!
+      this.attackCooldown -= dt;
+      if (this.attackCooldown <= 0) {
+        this.attackCooldown = 1200;
+        damagePlayer(8);
+        audio.playLaser();
+        // Attack muzzle effect
+        createSparks(this.x, horizonY + (H - horizonY) * 0.9, '#ff0033', 10);
+      }
+    }
+
+    // Mid-range shooting opportunity
+    if (this.z < 0.7 && Math.random() < 0.002 * (wave * 0.5)) {
+      this.shoot();
+    }
+  }
+
+  shoot() {
+    const p = project3D(this.x, this.z);
+    projectiles.push(new PlasmaBolt(p.pX, p.pY - p.size * 0.6, W / 2 + (Math.random() * 200 - 100), H));
+    audio.playLaser();
+  }
+
+  draw() {
+    const { pX, pY, size } = project3D(this.x, this.z);
+    const bob = Math.sin(this.walkCycle) * (size * 0.05);
+    const legSwing = Math.cos(this.walkCycle) * (size * 0.2);
+
+    ctx.save();
+    ctx.translate(pX, pY + bob);
+
+    // Shadow
+    ctx.fillStyle = 'rgba(20, 5, 0, 0.4)';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, size * 0.3, size * 0.08, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Chrome Endoskeleton Anatomy
+    ctx.lineWidth = Math.max(1.5, size * 0.035);
+    ctx.strokeStyle = this.color;
+    ctx.fillStyle = this.color;
+
+    // Legs
+    // Left Leg
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.1, -size * 0.4);
+    ctx.lineTo(-size * 0.15 - legSwing * 0.5, -size * 0.2);
+    ctx.lineTo(-size * 0.15 - legSwing, 0);
+    ctx.stroke();
+
+    // Right Leg
+    ctx.beginPath();
+    ctx.moveTo(size * 0.1, -size * 0.4);
+    ctx.lineTo(size * 0.15 + legSwing * 0.5, -size * 0.2);
+    ctx.lineTo(size * 0.15 + legSwing, 0);
+    ctx.stroke();
+
+    // Spine & Ribcage
+    ctx.beginPath();
+    ctx.moveTo(0, -size * 0.4);
+    ctx.lineTo(0, -size * 0.75);
+    ctx.stroke();
+
+    // Ribs
+    for (let r = 0; r < 3; r++) {
+      let ry = -size * (0.5 + r * 0.08);
+      let rw = size * (0.16 - r * 0.02);
+      ctx.beginPath();
+      ctx.moveTo(-rw, ry);
+      ctx.lineTo(rw, ry);
+      ctx.stroke();
+    }
+
+    // Shoulders
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.2, -size * 0.75);
+    ctx.lineTo(size * 0.2, -size * 0.75);
+    ctx.stroke();
+
+    // Skull
+    ctx.beginPath();
+    ctx.roundRect(-size * 0.1, -size * 0.98, size * 0.2, size * 0.22, size * 0.04);
+    ctx.fill();
+    // Metal Jaw
+    ctx.beginPath();
+    ctx.rect(-size * 0.06, -size * 0.78, size * 0.12, size * 0.06);
+    ctx.fill();
+
+    // Glowing Red Terminator Eyes
+    ctx.fillStyle = '#ff0000';
+    ctx.shadowColor = '#ff1100';
+    ctx.shadowBlur = size * 0.15;
+    ctx.beginPath();
+    ctx.arc(-size * 0.04, -size * 0.9, Math.max(1.5, size * 0.025), 0, Math.PI * 2);
+    ctx.arc(size * 0.04, -size * 0.9, Math.max(1.5, size * 0.025), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Arms & Plasma Rifle
+    ctx.strokeStyle = '#99a3ad';
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.2, -size * 0.75);
+    ctx.lineTo(-size * 0.12, -size * 0.55);
+    ctx.lineTo(size * 0.15, -size * 0.5); // holding rifle
+    ctx.stroke();
+
+    // Rifle barrel
+    ctx.fillStyle = '#222';
+    ctx.fillRect(size * 0.02, -size * 0.54, size * 0.25, size * 0.06);
+
+    ctx.restore();
+  }
+
+  hit(damage, isHeadshot = false) {
+    this.hp -= damage;
+    audio.playMetalHit();
+    if (navigator.vibrate) navigator.vibrate(15);
+
+    const { pX, pY, size } = project3D(this.x, this.z);
+    createSparks(pX, pY - size * 0.5, '#ffffaa', 6);
+
+    if (this.hp <= 0) {
+      this.dead = true;
+      audio.playExplosion();
+      createExplosion(pX, pY - size * 0.5, size * 0.8);
+      score += isHeadshot ? 250 : 100;
+      updateUI();
+    }
+  }
+
+  isHit(screenX, screenY) {
+    const { pX, pY, size } = project3D(this.x, this.z);
+    const halfW = size * 0.25;
+    const top = pY - size;
+    const bottom = pY;
+    if (screenX >= pX - halfW && screenX <= pX + halfW && screenY >= top && screenY <= bottom) {
+      // Headshot detection: top 30% of hit area
+      const isHead = screenY <= top + (size * 0.3);
+      return { hit: true, headshot: isHead };
+    }
+    return { hit: false };
+  }
+}
+
+/**
+ * HUNTER-KILLER / ATTACK HELICOPTER DROPSHIP
+ */
+class DropshipHelicopter {
+  constructor() {
+    this.direction = Math.random() < 0.5 ? 1 : -1;
+    this.x = this.direction === 1 ? -100 : W + 100;
+    this.y = horizonY - 60 - Math.random() * 80;
+    this.speed = 1.8;
+    this.hp = 18 + wave * 4;
+    this.rotorAngle = 0;
+    this.droppedPods = false;
+    this.dropX = W * 0.3 + Math.random() * (W * 0.4);
+    this.soundTimer = 0;
+  }
+
+  update(dt) {
+    this.x += this.direction * this.speed;
+    this.rotorAngle += dt * 0.05;
+
+    this.soundTimer += dt;
+    if (this.soundTimer > 90) {
+      this.soundTimer = 0;
+      audio.playHeliSound();
+    }
+
+    // Drop reinforcement capsule at midpoint
+    if (!this.droppedPods && Math.abs(this.x - this.dropX) < 40) {
+      this.droppedPods = true;
+      pods.push(new DropPod(this.x, this.y + 20));
+      pods.push(new DropPod(this.x + (this.direction * -40), this.y + 20));
+    }
+  }
+
+  draw() {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    if (this.direction === -1) ctx.scale(-1, 1);
+
+    // Dropship Body (Futuristic VTOL gunship silhouette)
+    ctx.fillStyle = '#1c2128';
+    ctx.strokeStyle = '#475463';
+    ctx.lineWidth = 2;
+
+    // Cockpit
+    ctx.beginPath();
+    ctx.moveTo(35, 5);
+    ctx.lineTo(55, 12);
+    ctx.lineTo(35, 20);
+    ctx.lineTo(-40, 18);
+    ctx.lineTo(-60, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Red Searchlight/Sensor pod
+    ctx.fillStyle = '#ff1100';
+    ctx.beginPath();
+    ctx.arc(42, 14, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Twin Rotors / VTOL Turbines
+    const bladeW = Math.cos(this.rotorAngle) * 45;
+    ctx.strokeStyle = '#718294';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-10 - bladeW, -10);
+    ctx.lineTo(-10 + bladeW, -10);
+    ctx.moveTo(25 - bladeW, -10);
+    ctx.lineTo(25 + bladeW, -10);
+    ctx.stroke();
+
+    // Pylon struts
+    ctx.strokeStyle = '#333';
+    ctx.beginPath();
+    ctx.moveTo(-10, -10); ctx.lineTo(-10, 5);
+    ctx.moveTo(25, -10); ctx.lineTo(25, 5);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  hit(dmg) {
+    this.hp -= dmg;
+    audio.playMetalHit();
+    createSparks(this.x, this.y, '#ffaa33', 5);
+    if (this.hp <= 0) {
+      audio.playExplosion();
+      createExplosion(this.x, this.y, 60);
+      score += 600;
+      updateUI();
+      helicopter = null;
+    }
+  }
+
+  isHit(px, py) {
+    return Math.hypot(px - this.x, py - this.y) < 45;
+  }
+}
+
+/**
+ * REINFORCEMENT DROP POD
+ */
+class DropPod {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.vy = 2.5;
+    this.groundY = horizonY + 25 + Math.random() * 40;
+    this.landed = false;
+  }
+  update(dt) {
+    if (!this.landed) {
+      this.y += this.vy;
+      if (this.y >= this.groundY) {
+        this.landed = true;
+        audio.playExplosion();
+        createSparks(this.x, this.y, '#ff8822', 15);
+        // Spawn Endoskeleton directly from pod on the horizon
+        robots.push(new Endoskeleton(this.x, 0.95));
+      }
+    }
+  }
+  draw() {
+    if (this.landed) return;
+    ctx.fillStyle = '#444';
+    ctx.fillRect(this.x - 6, this.y - 12, 12, 16);
+    // Thruster flare
+    ctx.fillStyle = '#ff8800';
+    ctx.beginPath();
+    ctx.moveTo(this.x - 4, this.y + 4);
+    ctx.lineTo(this.x + 4, this.y + 4);
+    ctx.lineTo(this.x, this.y + 16);
+    ctx.fill();
+  }
+}
+
+/**
+ * PLASMA BULLETS (Enemies attacking Outpost)
+ */
+class PlasmaBolt {
+  constructor(sx, sy, tx, ty) {
+    this.x = sx;
+    this.y = sy;
+    const angle = Math.atan2(ty - sy, tx - sx);
+    this.vx = Math.cos(angle) * 0.45;
+    this.vy = Math.sin(angle) * 0.45;
+    this.dead = false;
+  }
+  update(dt) {
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    if (this.y >= H - 15) {
+      this.dead = true;
+      damagePlayer(4);
+    }
+  }
+  draw() {
+    ctx.save();
+    ctx.fillStyle = '#ff1111';
+    ctx.shadowColor = '#ff2200';
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+/**
+ * PARTICLE SYSTEMS & VISUAL FX
+ */
+class Particle {
+  constructor(x, y, vx, vy, color, size, life) {
+    this.x = x; this.y = y;
+    this.vx = vx; this.vy = vy;
+    this.color = color;
+    this.size = size;
+    this.life = life;
+    this.maxLife = life;
+  }
+  update(dt) {
+    this.x += this.vx * (dt / 16);
+    this.y += this.vy * (dt / 16);
+    this.vy += 0.05; // gravity
+    this.life -= dt;
+  }
+  draw() {
+    ctx.fillStyle = this.color;
+    ctx.globalAlpha = Math.max(0, this.life / this.maxLife);
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1.0;
+  }
+}
+
+function createSparks(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1.5 + Math.random() * 4;
+    particles.push(new Particle(
+      x, y,
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed,
+      color,
+      1.5 + Math.random() * 2,
+      250 + Math.random() * 200
+    ));
+  }
+}
+
+function createExplosion(x, y, radius) {
+  screenShake = 12;
+  for (let i = 0; i < 28; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1 + Math.random() * 5;
+    const colors = ['#ff2200', '#ff9900', '#ffffff', '#444'];
+    particles.push(new Particle(
+      x, y,
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed - 1,
+      colors[Math.floor(Math.random() * colors.length)],
+      2 + Math.random() * (radius * 0.1),
+      400 + Math.random() * 300
+    ));
+  }
+}
+
+function damagePlayer(amount) {
+  baseHp -= amount;
+  flashDamage = 0.4;
+  screenShake = 16;
+  if (navigator.vibrate) navigator.vibrate([40, 30, 40]);
+  if (baseHp <= 0) {
+    baseHp = 0;
+    gameOver();
+  }
+  updateUI();
+}
+
+/**
+ * ENVIRONMENT RENDERING (Desert Outpost & Sky)
+ */
+function drawDesertAtmosphere() {
+  // Apocalyptic Crimson Desert Sunset Sky
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
+  skyGrad.addColorStop(0, '#1c0300');
+  skyGrad.addColorStop(0.6, '#6b1904');
+  skyGrad.addColorStop(1, '#d85816');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, W, horizonY);
+
+  // Distant Burning Sun
+  ctx.fillStyle = '#ffaa33';
+  ctx.shadowColor = '#ff4400';
+  ctx.shadowBlur = 35;
+  ctx.beginPath();
+  ctx.arc(W * 0.72, horizonY * 0.7, 34, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Dunes in Background (Horizon)
+  ctx.fillStyle = '#8f3310';
+  ctx.beginPath();
+  ctx.moveTo(0, horizonY);
+  ctx.quadraticCurveTo(W * 0.25, horizonY - 20, W * 0.5, horizonY);
+  ctx.quadraticCurveTo(W * 0.75, horizonY + 15, W, horizonY - 10);
+  ctx.lineTo(W, horizonY + 40);
+  ctx.lineTo(0, horizonY + 40);
+  ctx.fill();
+
+  // Desert Wasteland Ground
+  const groundGrad = ctx.createLinearGradient(0, horizonY, 0, H);
+  groundGrad.addColorStop(0, '#591f09');
+  groundGrad.addColorStop(0.4, '#381305');
+  groundGrad.addColorStop(1, '#1f0801');
+  ctx.fillStyle = groundGrad;
+  ctx.fillRect(0, horizonY, W, H - horizonY);
+
+  // Midground Dunes & Rocks
+  ctx.fillStyle = '#421606';
+  ctx.beginPath();
+  ctx.moveTo(0, horizonY + 70);
+  ctx.bezierCurveTo(W * 0.35, horizonY + 40, W * 0.7, horizonY + 90, W, horizonY + 60);
+  ctx.lineTo(W, H);
+  ctx.lineTo(0, H);
+  ctx.fill();
+
+  // Foreground Outpost Sandbag / Bunker Defense Barricade
+  ctx.fillStyle = '#1c1512';
+  ctx.fillRect(0, H - 45, W, 45);
+
+  ctx.strokeStyle = '#3d2e26';
+  ctx.lineWidth = 4;
+  for (let s = 0; s < W; s += 80) {
+    ctx.strokeRect(s, H - 40, 75, 20);
+    ctx.strokeRect(s + 40, H - 20, 75, 20);
+  }
+
+  // Barbed Wire on bunker edge
+  ctx.strokeStyle = '#5c544d';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < W; i += 25) {
+    ctx.lineTo(i, H - 48 + (i % 2 === 0 ? -6 : 6));
+  }
+  ctx.stroke();
+}
+
+/**
+ * TURRET & RETICLE RENDERING
+ */
+function drawTurretAndCrosshair() {
+  // Heavy Turret Barrels following Crosshair
+  const turretBaseX = W / 2;
+  const turretBaseY = H + 10;
+  const angle = Math.atan2(touchPos.y - turretBaseY, touchPos.x - turretBaseX);
+
+  ctx.save();
+  ctx.translate(turretBaseX, turretBaseY);
+  ctx.rotate(angle);
+
+  // Dual Twin Heavy Cannon Barrels
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, -14, 70, 8);
+  ctx.fillRect(0, 6, 70, 8);
+  ctx.fillStyle = '#2b2b2b';
+  ctx.fillRect(-20, -22, 45, 44);
+
+  // Muzzle flash when firing
+  if (isFiring && Date.now() - lastShotTime < 40) {
+    ctx.fillStyle = '#ffff66';
+    ctx.shadowColor = '#ff6600';
+    ctx.shadowBlur = 20;
+    ctx.beginPath();
+    ctx.arc(75, -10, 14, 0, Math.PI * 2);
+    ctx.arc(75, 10, 14, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Animated Tactical HUD Crosshair
+  const cx = touchPos.x;
+  const cy = touchPos.y;
+  ctx.save();
+  ctx.strokeStyle = '#ff3300';
+  ctx.lineWidth = 2;
+  ctx.shadowColor = '#ff3300';
+  ctx.shadowBlur = 8;
+
+  // Outer segmented ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, 22, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Center pip
+  ctx.fillStyle = '#ff2200';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Target ticks
+  ctx.beginPath();
+  ctx.moveTo(cx - 30, cy); ctx.lineTo(cx - 12, cy);
+  ctx.moveTo(cx + 30, cy); ctx.lineTo(cx + 12, cy);
+  ctx.moveTo(cx, cy - 30); ctx.lineTo(cx, cy - 12);
+  ctx.moveTo(cx, cy + 30); ctx.lineTo(cx, cy + 12);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+/**
+ * WEAPONS & FIRING LOGIC
+ */
+function fireWeapon() {
+  const now = Date.now();
+  if (now - lastShotTime < FIRE_RATE) return;
+  lastShotTime = now;
+
+  audio.playShoot();
+  if (navigator.vibrate) navigator.vibrate(18);
+
+  const cx = touchPos.x;
+  const cy = touchPos.y;
+
+  // Bullet hit dust/spark at target point
+  createSparks(cx, cy, '#ffdd88', 4);
+
+  // Check Helicopter Collision
+  if (helicopter && helicopter.isHit(cx, cy)) {
+    helicopter.hit(2);
+    return;
+  }
+
+  // Check Robot Collisions (sort front to back to hit closest unit first)
+  const sorted = [...robots].sort((a, b) => a.z - b.z);
+  for (let r of sorted) {
+    const res = r.isHit(cx, cy);
+    if (res.hit) {
+      r.hit(res.headshot ? 3 : 1, res.headshot);
+      break;
+    }
+  }
+}
+
+function launchMissile() {
+  if (missiles <= 0) return;
+  missiles--;
+  document.getElementById('missile-count').innerText = 'x' + missiles;
+  audio.playExplosion();
+  screenShake = 25;
+
+  // Screen-clearing EMP blast
+  flashDamage = 0.7;
+  for (let r of robots) {
+    const p = project3D(r.x, r.z);
+    createExplosion(p.pX, p.pY - p.size * 0.5, 40);
+    r.hit(10);
+  }
+  if (helicopter) {
+    helicopter.hit(15);
+  }
+}
+
+/**
+ * SPAWN LOGIC & GAME LOOP
+ */
+let heliSpawnTimer = 8000;
+let robotSpawnTimer = 0;
+
+function spawnWaves(dt) {
+  // Ground robots spawning on horizon
+  robotSpawnTimer += dt;
+  const spawnInterval = Math.max(800, 2600 - (wave * 250));
+  if (robotSpawnTimer > spawnInterval) {
+    robotSpawnTimer = 0;
+    const spawnX = W * 0.15 + Math.random() * (W * 0.7);
+    robots.push(new Endoskeleton(spawnX, 1.0));
+  }
+
+  // Hunter-Killer dropship helicopter spawn
+  heliSpawnTimer -= dt;
+  if (heliSpawnTimer <= 0 && !helicopter) {
+    heliSpawnTimer = 14000 + Math.random() * 6000;
+    helicopter = new DropshipHelicopter();
+  }
+
+  // Wave advancement every 25 kills
+  const targetWave = Math.floor(score / 1500) + 1;
+  if (targetWave > wave) {
+    wave = targetWave;
+    missiles = Math.min(5, missiles + 1); // bonus missile each wave
+    document.getElementById('missile-count').innerText = 'x' + missiles;
+    updateUI();
+  }
+}
+
+let lastFrameTime = performance.now();
+function gameLoop(time) {
+  const dt = Math.min(50, time - lastFrameTime);
+  lastFrameTime = time;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Screen shake translation
+  if (screenShake > 0) {
+    ctx.save();
+    const sx = (Math.random() - 0.5) * screenShake;
+    const sy = (Math.random() - 0.5) * screenShake;
+    ctx.translate(sx, sy);
+    screenShake *= 0.88;
+    if (screenShake < 0.5) screenShake = 0;
+  }
+
+  // Draw background world
+  drawDesertAtmosphere();
+
+  if (gameState === 'PLAYING') {
+    // Handle Auto-Firing when screen touched
+    if (isFiring) {
+      fireWeapon();
+    }
+
+    spawnWaves(dt);
+
+    // Update & Draw Dropship Helicopter
+    if (helicopter) {
+      helicopter.update(dt);
+      helicopter.draw();
+      if (helicopter.x < -150 || helicopter.x > W + 150) {
+        helicopter = null; // flew off screen
+      }
+    }
+
+    // Update & Draw Drop Pods
+    for (let i = pods.length - 1; i >= 0; i--) {
+      pods[i].update(dt);
+      pods[i].draw();
+      if (pods[i].landed) pods.splice(i, 1);
+    }
+
+    // Update & Draw Endoskeletons (Back to front for accurate depth overlap)
+    robots.sort((a, b) => b.z - a.z);
+    for (let i = robots.length - 1; i >= 0; i--) {
+      const r = robots[i];
+      r.update(dt);
+      r.draw();
+      if (r.dead) robots.splice(i, 1);
+    }
+
+    // Plasma bolts
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p = projectiles[i];
+      p.update(dt);
+      p.draw();
+      if (p.dead) projectiles.splice(i, 1);
+    }
+
+    // Particle FX
+    for (let i = particles.length - 1; i >= 0; i--) {
+      particles[i].update(dt);
+      particles[i].draw();
+      if (particles[i].life <= 0) particles.splice(i, 1);
+    }
+  }
+
+  // Outpost Cannon & Reticle
+  drawTurretAndCrosshair();
+
+  if (screenShake > 0) {
+    ctx.restore();
+  }
+
+  // Damage screen flash
+  if (flashDamage > 0) {
+    ctx.fillStyle = `rgba(255, 0, 0, ${flashDamage})`;
+    ctx.fillRect(0, 0, W, H);
+    flashDamage -= dt * 0.002;
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+function updateUI() {
+  document.getElementById('hp-val').innerText = baseHp + '%';
+  document.getElementById('score-val').innerText = score.toString().padStart(5, '0');
+  document.getElementById('wave-val').innerText = wave;
+}
+
+function gameOver() {
+  gameState = 'GAMEOVER';
+  document.getElementById('final-stats').innerText = `Perimeter Breached on Wave ${wave}.\nFinal Score: ${score}`;
+  document.getElementById('game-over-screen').classList.remove('hidden');
+}
+
+function resetGame() {
+  baseHp = 100;
+  score = 0;
+  wave = 1;
+  missiles = 3;
+  robots = [];
+  projectiles = [];
+  particles = [];
+  pods = [];
+  helicopter = null;
+  document.getElementById('missile-count').innerText = 'x' + missiles;
+  updateUI();
+  document.getElementById('game-over-screen').classList.add('hidden');
+  document.getElementById('start-screen').classList.add('hidden');
+  gameState = 'PLAYING';
+}
+
+/**
+ * TOUCH CONTROLS (Optimized for Android)
+ */
+function handlePointerMove(e) {
+  touchPos.x = e.clientX;
+  touchPos.y = e.clientY;
+}
+
+window.addEventListener('pointerdown', (e) => {
+  if (e.target.closest('#missile-btn') || e.target.closest('button')) return;
+  audio.init();
+  isFiring = true;
+  handlePointerMove(e);
+});
+
+window.addEventListener('pointermove', (e) => {
+  if (isFiring) handlePointerMove(e);
+});
+
+window.addEventListener('pointerup', () => { isFiring = false; });
+window.addEventListener('pointercancel', () => { isFiring = false; });
+
+document.getElementById('missile-btn').addEventListener('pointerdown', (e) => {
+  e.stopPropagation();
+  launchMissile();
+});
+
+document.getElementById('start-btn').addEventListener('click', () => {
+  audio.init();
+  resetGame();
+});
+
+document.getElementById('restart-btn').addEventListener('click', () => {
+  audio.init();
+  resetGame();
+});
+
+// Run loop
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
